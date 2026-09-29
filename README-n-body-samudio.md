@@ -4,12 +4,14 @@ jupytext:
   text_representation:
     extension: .md
     format_name: myst
-    format_version: 0.13
-    jupytext_version: 1.19.5
 kernelspec:
   name: python3
   display_name: Python 3 (ipykernel)
   language: python
+language_info:
+  name: python
+  pygments_lexer: ipython3
+  nbconvert_exporter: python
 ---
 
 # n-body problem
@@ -39,6 +41,11 @@ en option on vous proposera, une fois votre code fonctionnel en 2D, de passer à
 ça peut valoir le coup d'anticiper ça dès le premier jet, si vous vous sentez de le faire comme ça
 ```
 
+```{admonition} l'objectif du TP
+l'objectif principal est de **ne pas écrire de boucle `for` sur les corps** pour calculer les forces  
+tout doit se faire avec des opérations sur des tableaux, en s'appuyant sur le **broadcasting** de numpy
+```
+
 +++
 
 ## imports
@@ -51,6 +58,26 @@ import matplotlib.pyplot as plt
 
 %matplotlib ipympl
 ```
+
+## échauffement : le broadcasting
+
+avant de commencer, assurez-vous d'avoir bien en tête les règles du broadcasting
+
+```{code-cell} ipython3
+a = np.array([1, 2, 3])
+```
+
+**Énoncé :**
+1. Quelle est la forme de `a[:, None]` ? et de `a[None, :]` ?
+2. Quelle sera la forme de `a[:, None] - a[None, :]` ? Que contient l'élément `[i, j]` ?
+3. Même question avec un tableau `b` de forme `(2, 3)` et l'expression `b[:, None, :] - b[:, :, None]`
+
+<details>
+<summary><b>Indice : règles du broadcasting</b></summary>
+
+numpy aligne les formes **par la droite** ; deux dimensions sont compatibles si elles sont égales ou si l'une des deux vaut 1  
+une dimension de taille 1 est alors "répétée" autant de fois que nécessaire
+</details>
 
 ## initialisation aléatoire
 
@@ -80,6 +107,19 @@ def init_problem(N):
     return None, None, None
 ```
 
+<details>
+<summary><b>Indice 1 : les masses</b></summary>
+
+attention à la borne inférieure : une masse nulle poserait problème plus tard (on divisera par la masse)
+</details>
+
+<details>
+<summary><b>Indice 2 : les positions</b></summary>
+
+`np.random.uniform(low, high, size)` accepte des `low` et `high` qui sont eux-mêmes des tableaux, tant qu'ils sont *broadcastables* avec `size`  
+quelle forme donner à `low` et `high` pour tirer directement un tableau `(2, N)` ?
+</details>
+
 ```{code-cell} ipython3
 :tags: [level_intermediate]
 
@@ -91,7 +131,7 @@ masses, positions, speeds = init_problem(10)
 
 # et ceci devrait afficher OK
 try:
-    masses.shape == (10,) and positions.shape == speeds.shape == (2, 10)
+    assert masses.shape == (10,) and positions.shape == speeds.shape == (2, 10)
     print("OK")
 except:
     print("KO")
@@ -148,6 +188,49 @@ def forces(masses, positions, G=1.0):
     pass
 ```
 
+```{admonition} sans boucle !
+on vous suggère de procéder par étapes, chacune produisant un tableau dont vous pouvez vérifier la forme  
+1. tous les vecteurs $\vec{r}_j - \vec{r}_i$ pour tous les couples $(i, j)$  
+2. toutes les distances $\lvert \vec{r}_j - \vec{r}_i \rvert$  
+3. le coefficient $G \, m_i m_j / \lvert \dots \rvert^3$ pour tous les couples  
+4. la somme sur $j$
+```
+
+<details>
+<summary><b>Indice 1 : les vecteurs entre particules</b></summary>
+
+on veut un tableau `diff` de forme `(2, N, N)` tel que `diff[:, i, j]` soit le vecteur $\vec{r}_j - \vec{r}_i$  
+repensez à l'échauffement : à partir de `positions` de forme `(2, N)`, comment obtenir par broadcasting une forme `(2, N, N)` ?
+</details>
+
+<details>
+<summary><b>Indice 2 : les distances</b></summary>
+
+regardez du côté de `np.linalg.norm` et de son paramètre `axis`  
+sur quel axe faut-il calculer la norme, et quelle forme obtient-on ?
+</details>
+
+<details>
+<summary><b>Indice 3 : le cas i = j</b></summary>
+
+que vaut `dist[i, i]` ? que se passe-t-il quand on divise par cette valeur ?  
+une particule n'agit pas sur elle-même : trouvez une astuce pour que sa contribution soit nulle  
+(pensez à `np.fill_diagonal` et à `np.inf`)
+</details>
+
+<details>
+<summary><b>Indice 4 : le produit des masses</b></summary>
+
+même idée que dans l'échauffement : comment obtenir un tableau `(N, N)` dont l'élément `[i, j]` vaut `masses[i] * masses[j]` ?
+</details>
+
+<details>
+<summary><b>Indice 5 : la somme</b></summary>
+
+`coeff` est de forme `(N, N)` et `diff` de forme `(2, N, N)` : leur produit est-il possible ?  
+ensuite, sur quel axe faut-il sommer pour obtenir la force sur la particule `i` ?
+</details>
+
 ```{code-cell} ipython3
 :tags: [level_intermediate]
 
@@ -183,6 +266,30 @@ def simulate(masses, positions, speeds, dt=0.1, nb_steps=100):
     pass
 ```
 
+<details>
+<summary><b>Indice 1 : le stockage</b></summary>
+
+allouez dès le départ le tableau résultat, de forme `(nb_steps, dim, N)`  
+la dimension `dim` peut se lire sur `positions`, ce qui rend votre code indépendant de la 2D ou de la 3D
+</details>
+
+<details>
+<summary><b>Indice 2 : de la force à l'accélération</b></summary>
+
+`forces()` retourne des forces, pas des accélérations : $a = F / m$  
+`forces` est de forme `(dim, N)` et `masses` de forme `(N,)` : est-ce que la division est possible directement ?
+</details>
+
+<details>
+<summary><b>Indice 3 : la mise à jour</b></summary>
+
+à chaque pas : accélération, puis vitesses, puis positions (c'est l'approche 1 décrite plus bas)  
+$s = s + a.dt$ puis $p = p + s.dt$
+</details>
+
+la boucle porte sur le temps, ce qui est inévitable ; il n'y en a aucune sur les corps
+</details>
+
 ```{code-cell} ipython3
 :tags: [level_intermediate]
 
@@ -217,14 +324,8 @@ except Exception as exc:
 
 ne reste plus qu'à dessiner; quelques indices potentiels:
 
-- 1. chaque corps a une couleur; l'appelant peut vous passer un jeu de couleurs, sinon en tirer un au hasard
-- 2.a pour l'épaisseur de chaque point, on peut imaginer utiliser la masse de l'objet  
-  2.b ou peut-être aussi, à tester, la vitesse de l'objet (plus c'est lent et plus on l'affiche en gros ?)
-
-```{admonition} masses et vitesses ?
-j'ai choisi de repasser à `draw()` le tableau des masses à cause de 2.a;  
-si j'avais voulu implémenter 2.b il faudrait tripoter un peu plus nos interfaces - car en l'état on n'a pas accès aux vitesses pendant la simulation - mais n'hésitez pas à le faire si nécessaire..
-```
+1) chaque corps a une couleur; l'appelant peut vous passer un jeu de couleurs, sinon en tirer un au hasard
+2) pour l'épaisseur de chaque point, on peut imaginer utiliser la masse de l'objet  
 
 ```{code-cell} ipython3
 :tags: [level_basic]
@@ -245,6 +346,20 @@ def draw(simulation, masses, colors=None, scale=10.):
     """
     pass
 ```
+
+<details>
+<summary><b>Indice 1 : extraire un corps</b></summary>
+
+que représente `simulation[:, :, i]` ? quelle est sa forme ?  
+et sa transposée, `simulation[:, :, i].T` ?
+</details>
+
+<details>
+<summary><b>Indice 2 : les arguments de scatter</b></summary>
+
+`ax.scatter(x, y, color=..., s=...)` : `s` est la taille des points  
+en Python, `f(*t)` passe les éléments de `t` comme arguments séparés ; avec la bonne forme, cela permet d'écrire un seul appel valable en 2D comme en 3D
+</details>
 
 ## un jeu de couleurs
 
@@ -271,15 +386,9 @@ pour commencer et tester, on se met dans l'état initial reproductible
 # draw(simulate(masses, positions, speeds), masses, colors3)
 ```
 
-et avec ces données vous devriez obtenir plus ou moins une sortie de ce genre  
-mais [voyez aussi la discussion ci-dessous sur les diverses stratégies possibles](label-n-body-strategies)
-```{image} media/init3-1.png
-```
+et avec ces données vous devriez obtenir plus ou moins une sortie de ce genre (voir media/init3-1.png) 
 
-+++
 
-`````{grid} 2 2 2 2 
-````{card}
 après vous avez le droit de vous enhardir avec des scénarii plus compliqués
 par exemple avec ce code
 
@@ -289,29 +398,26 @@ sim5 = simulate(m5, p5, s5, nb_steps=1000)
 draw(sim5, m5, scale=3);
 plt.savefig("random5.png")
 ```
-````
-````{card}
-j'ai pu obtenir ceci
-```{image} media/random5.png
-```
-````
-`````
-
-+++
-
-***
-***
-***
-
-+++
 
 ## partie optionnelle
 
-+++
+PASSER SUR LE COURS SUR INTERNET POUR VOIR LES EXEMPLES
 
 ### option 1: la 3D
 
 modifiez votre code pour passer à une simulation en 3D
+
+<details>
+<summary><b>Indice</b></summary>
+
+si vous avez écrit `forces`, `simulate` et `draw` sans jamais supposer `dim == 2`, il n'y a presque rien à changer  
+il suffit de fournir des `positions` et `speeds` de forme `(3, N)`  
+que doit-on modifier dans `init_problem` pour tirer au sort une troisième coordonnée ?
+</details>
+
+
+pour le tirage aléatoire, on peut ajouter un paramètre `dim` et construire `low` et `high` avec une forme `(dim, 1)`
+</details>
 
 +++
 
@@ -322,8 +428,6 @@ voyez un peu si vous arrivez à produire un outil un peu plus convivial pour exp
 
 - une animation qui affiche les points au fur et à mesure du temps
 - qu'on peut controler un peu comme une vidéo avec pause / backward / forward
-- l'option de laisser la trace du passé
-- et si vous avez un code 3d, la possibilité de changer le point de vue de la caméra sur le monde
 - etc etc...
 
 voici une possibilité avec matplotlib; mais cela dit ne vous sentez pas obligé de rester dans Jupyter Lab ou matplotlib, il y a plein de technos rigolotes qui savent se décliner sur le web, vous avez l'embarras du choix...
